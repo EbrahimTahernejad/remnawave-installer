@@ -65,8 +65,8 @@ cd /opt/remnanode
 
 # ── .env ──
 cat > .env <<EOF
-APP_PORT=$APP_PORT
-SSL_CERT=$SSL_CERT
+NODE_PORT=$APP_PORT
+SECRET_KEY=$SSL_CERT
 EOF
 green "Wrote .env (SSL_CERT=$SSL_CERT)"
 
