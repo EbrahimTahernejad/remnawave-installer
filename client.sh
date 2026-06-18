@@ -20,7 +20,14 @@ if ! [[ "$NODE_PORT" =~ ^[0-9]+$ ]] || (( NODE_PORT < 1 || NODE_PORT > 65535 ));
   exit 1
 fi
 
-echo "[1/2] Creating remnanode folder..."
+echo "[1/3] Installing Docker..."
+if ! command -v docker &>/dev/null; then
+  curl -fsSL https://get.docker.com | sh
+else
+  echo "Docker already installed, skipping."
+fi
+
+echo "[2/3] Creating remnanode folder..."
 mkdir -p /opt/remnanode
 
 # ---- YAML safe escaping (important) ----
@@ -47,7 +54,7 @@ services:
       - SECRET_KEY='${ESCAPED_SECRET_KEY}'
 EOF
 
-echo "[2/2] Starting docker compose..."
+echo "[3/3] Starting docker compose..."
 cd /opt/remnanode
 docker compose up -d --build
 
