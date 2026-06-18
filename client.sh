@@ -1,94 +1,78 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-bold()   { printf "\033[1m%s\033[0m\n" "$*"; }
-green()  { printf "\033[32m%s\033[0m\n" "$*"; }
-yellow() { printf "\033[33m%s\033[0m\n" "$*"; }
-blue()   { printf "\033[34m%s\033[0m\n" "$*"; }
-red()    { printf "\033[31m%s\033[0m\n" "$*"; }
-
-is_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 )); }
-
-bold "RemnaNode installer"
-
-# ── Inputs ──
-read -r -p "$(bold 'App port') [8000]: " APP_PORT
-APP_PORT="${APP_PORT:-8000}"
-while ! is_port "$APP_PORT"; do
-  red "Invalid port (1–65535)."
-  read -r -p "App port [8000]: " APP_PORT
-  APP_PORT="${APP_PORT:-8000}"
-done
-
-read -r -p "$(bold 'SSL_CERT string (required): ')" SSL_CERT
-SSL_CERT="${SSL_CERT:-}"
-if [[ -z "$SSL_CERT" ]]; then
-  red "SSL_CERT is required. Aborting."
+# ---- check root ----
+if [[ $EUID -ne 0 ]]; then
+  echo "Run as root: sudo ./install.sh"
   exit 1
 fi
 
-# ── Sanitize SSL_CERT ──
-# Remove leading/trailing whitespace
-SSL_CERT="$(echo "$SSL_CERT" | xargs)"
-# Strip SSL_CERT= prefix if present
-SSL_CERT="${SSL_CERT#SSL_CERT=}"
-SSL_CERT="${SSL_CERT#SSL_CERT:=}"
-# Strip surrounding quotes (single or double)
-SSL_CERT="${SSL_CERT%\"}"
-SSL_CERT="${SSL_CERT#\"}"
-SSL_CERT="${SSL_CERT%\'}"
-SSL_CERT="${SSL_CERT#\'}"
+# ---- input secret ----
+read -rp "input: SECRET_KEY: " SECRET_KEY
 
-if [[ -z "$SSL_CERT" ]]; then
-  red "SSL_CERT became empty after sanitization. Aborting."
+# ---- input node port (default 2222) ----
+read -rp "input: NODE_PORT [2222]: " NODE_PORT
+NODE_PORT="${NODE_PORT:-2222}"
+
+# validate it's a number in the valid port range
+if ! [[ "$NODE_PORT" =~ ^[0-9]+$ ]] || (( NODE_PORT < 1 || NODE_PORT > 65535 )); then
+  echo "Invalid NODE_PORT: '$NODE_PORT' (must be 1-65535)"
   exit 1
 fi
 
-# ── Docker install ──
-if ! command -v docker >/dev/null 2>&1; then
-  blue "Installing Docker…"
-  sudo curl -fsSL https://get.docker.com | sh
-  green "Docker installed."
-else
-  green "Docker is already installed."
+echo "[1/7] Updating Ubuntu APT sources..."
+
+SRC_FILE="/etc/apt/sources.list.d/ubuntu.sources"
+BACKUP_FILE="/etc/apt/sources.list.d/ubuntu.sources.bak"
+
+cp "$SRC_FILE" "$BACKUP_FILE"
+
+# replace all URIs lines safely
+sed -i 's|^URIs:.*|URIs: http://mirror.arvancloud.ir/ubuntu|g' "$SRC_FILE"
+
+echo "[2/7] Adding hosts entry..."
+if ! grep -q "mirror.arvancloud.ir" /etc/hosts; then
+  echo "185.143.233.235 mirror.arvancloud.ir" >> /etc/hosts
 fi
 
-if ! docker compose version >/dev/null 2>&1; then
-  red "docker compose v2 not found. Install Docker Compose plugin and re-run."
-  exit 1
-fi
+echo "[3/7] Installing docker deb packages..."
+dpkg -i ./*.deb || true
 
-# ── Setup ──
-sudo mkdir -p /opt/remnanode /opt/remnawave/ssl
-sudo chown -R "$(id -u)":"$(id -g)" /opt/remnanode
-cd /opt/remnanode
+echo "[4/7] Fixing dependencies..."
+apt -f install -y
 
-# ── .env ──
-cat > .env <<EOF
-NODE_PORT=$APP_PORT
-SECRET_KEY=$SSL_CERT
-EOF
-green "Wrote .env (SSL_CERT=$SSL_CERT)"
+echo "[5/7] Loading docker image..."
+docker load -i remnanode.tar
 
-# ── docker-compose.yml ──
-cat > docker-compose.yml <<'YAML'
+echo "[6/7] Creating remnanode folder..."
+mkdir -p /opt/remnanode
+
+# ---- YAML safe escaping (important) ----
+ESCAPED_SECRET_KEY=$(printf "%s" "$SECRET_KEY" | sed "s/'/''/g")
+
+cat > /opt/remnanode/docker-compose.yml <<EOF
 services:
   remnanode:
     container_name: remnanode
     hostname: remnanode
-    image: remnawave/node:latest
-    restart: always
+    image: remnawave/node:2.7.0
     network_mode: host
+    restart: always
+    cap_add:
+      - NET_ADMIN
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
     volumes:
       - '/opt/remnawave/ssl:/var/lib/remnawave/configs/xray/ssl'
-    env_file:
-      - .env
-YAML
-green "Wrote docker-compose.yml"
+    environment:
+      - NODE_PORT=${NODE_PORT}
+      - SECRET_KEY='${ESCAPED_SECRET_KEY}'
+EOF
 
-# ── Run ──
-blue "Starting container…"
-docker compose up -d
-green "Container started."
-yellow "Tailing logs (Ctrl+C to stop; container keeps running):"
-docker compose logs -f
+echo "[7/7] Starting docker compose..."
+cd /opt/remnanode
+docker compose up -d --build
+
+echo "Done."
