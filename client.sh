@@ -20,31 +20,7 @@ if ! [[ "$NODE_PORT" =~ ^[0-9]+$ ]] || (( NODE_PORT < 1 || NODE_PORT > 65535 ));
   exit 1
 fi
 
-echo "[1/7] Updating Ubuntu APT sources..."
-
-SRC_FILE="/etc/apt/sources.list.d/ubuntu.sources"
-BACKUP_FILE="/etc/apt/sources.list.d/ubuntu.sources.bak"
-
-cp "$SRC_FILE" "$BACKUP_FILE"
-
-# replace all URIs lines safely
-sed -i 's|^URIs:.*|URIs: http://mirror.arvancloud.ir/ubuntu|g' "$SRC_FILE"
-
-echo "[2/7] Adding hosts entry..."
-if ! grep -q "mirror.arvancloud.ir" /etc/hosts; then
-  echo "185.143.233.235 mirror.arvancloud.ir" >> /etc/hosts
-fi
-
-echo "[3/7] Installing docker deb packages..."
-dpkg -i ./*.deb || true
-
-echo "[4/7] Fixing dependencies..."
-apt -f install -y
-
-echo "[5/7] Loading docker image..."
-docker load -i remnanode.tar
-
-echo "[6/7] Creating remnanode folder..."
+echo "[1/2] Creating remnanode folder..."
 mkdir -p /opt/remnanode
 
 # ---- YAML safe escaping (important) ----
@@ -71,7 +47,7 @@ services:
       - SECRET_KEY='${ESCAPED_SECRET_KEY}'
 EOF
 
-echo "[7/7] Starting docker compose..."
+echo "[2/2] Starting docker compose..."
 cd /opt/remnanode
 docker compose up -d --build
 
